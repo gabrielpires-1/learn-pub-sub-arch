@@ -29,6 +29,11 @@ func main() {
 	}
 	defer publishCh.Close()
 
+	_, _, err = pubsub.DeclareAndBind(connection, routing.ExchangePerilTopic, routing.GameLogSlug, routing.GameLogSlug+".*", pubsub.SimpleQueueDurable)
+	if err != nil {
+		log.Fatalf("could not subscribe to pause: %v", err)
+	}
+
 	gamelogic.PrintServerHelp()
 
 	for {

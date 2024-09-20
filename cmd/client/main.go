@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -18,7 +16,7 @@ const (
 )
 
 func main() {
-	fmt.Println("Starting Peril client...")
+	fmt.Println("starting Peril client...")
 
 	string_connect := "amqp://guest:guest@localhost:5672/"
 	connection, err := amqp.Dial(string_connect)
@@ -41,12 +39,39 @@ func main() {
 	if err != nil {
 		log.Fatalf("could not subscribe to pause: %v", err)
 	}
-	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
+	fmt.Printf("queue %v declared and bound!\n", queue.Name)
 
-	fmt.Println("Connected to RabbitMQ")
+	gs := gamelogic.NewGameState(username)
 
-	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
+	for {
+		input := gamelogic.GetInput()
+		if len(input) == 0 {
+			continue
+		}
+		switch input[0] {
+		case "spawn":
+			err = gs.CommandSpawn(input)
+			if err != nil {
+				log.Printf("could not spawn unit: %v", err)
+			}
+
+		case "move":
+			_, err = gs.CommandMove(input)
+			if err != nil {
+				log.Printf("could not move unit: %v", err)
+			}
+
+		case "status":
+			gs.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			fmt.Println("spamming not allowed yet")
+		case "quit":
+			gamelogic.PrintQuit()
+			return
+		default:
+			fmt.Println("Invalid command")
+		}
+	}
 }
