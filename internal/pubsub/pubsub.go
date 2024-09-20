@@ -13,6 +13,14 @@ const (
 	SimpleQueueTransient = 1
 )
 
+type AckType int
+
+const (
+	Ack AckType = iota
+	NackRequeue
+	NackDiscard
+)
+
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	jsonVal, err := json.Marshal(val)
 	if err != nil {
@@ -66,4 +74,48 @@ func DeclareAndBind(
 	fmt.Printf("Queue %s bound to exchange %s with key %s\n", queue.Name, exchange, key)
 
 	return ch, queue, nil
+}
+
+func SubscribeJSON[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType int,
+	handler func(T) AckType,
+) error {
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
+	if err != nil {
+		return err
+	}
+
+	deliveryCh, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for msg := range deliveryCh {
+			var data T
+			err := json.Unmarshal(msg.Body, &data)
+			if err != nil {
+				fmt.Println("Error unmarshalling message:", err)
+				continue
+			}
+			ack := handler(data)
+			if ack == Ack {
+				fmt.Println("Received message:", ack)
+				msg.Ack(false)
+			} else if ack == NackRequeue {
+				fmt.Println("Received message:", ack)
+				msg.Nack(false, true)
+			} else if ack == NackDiscard {
+				fmt.Println("Received message:", ack)
+				msg.Nack(false, false)
+			} else {
+				fmt.Println("Invalid ack:", ack)
+			}
+		}
+	}()
+	return nil
 }

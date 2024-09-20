@@ -30,7 +30,7 @@ func main() {
 		log.Fatalf("could not get username: %v", err)
 	}
 
-	_, queue, err := pubsub.DeclareAndBind(
+	ch, queue, err := pubsub.DeclareAndBind(
 		connection,
 		routing.ExchangePerilDirect,
 		routing.PauseKey+"."+username,
@@ -42,6 +42,28 @@ func main() {
 	fmt.Printf("queue %v declared and bound!\n", queue.Name)
 
 	gs := gamelogic.NewGameState(username)
+
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilDirect,
+		routing.PauseKey+"."+username,
+		routing.PauseKey,
+		pubsub.SimpleQueueTransient,
+		handlerPause(gs))
+	if err != nil {
+		log.Fatalf("could not subscribe to pause: %v", err)
+	}
+
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilTopic,
+		routing.ArmyMovesPrefix+"."+username,
+		routing.ArmyMovesPrefix+"."+"*",
+		pubsub.SimpleQueueTransient,
+		handlerMove(gs))
+	if err != nil {
+		log.Fatalf("could not subscribe to moves: %v", err)
+	}
 
 	for {
 		input := gamelogic.GetInput()
@@ -56,10 +78,21 @@ func main() {
 			}
 
 		case "move":
-			_, err = gs.CommandMove(input)
+			mv, err := gs.CommandMove(input)
 			if err != nil {
 				log.Printf("could not move unit: %v", err)
 			}
+
+			err = pubsub.PublishJSON(
+				ch,
+				routing.ExchangePerilTopic,
+				routing.ArmyMovesPrefix+"."+username,
+				mv)
+			if err != nil {
+				log.Printf("could not publish move: %v", err)
+			}
+
+			fmt.Println("move published sucessfully")
 
 		case "status":
 			gs.CommandStatus()
