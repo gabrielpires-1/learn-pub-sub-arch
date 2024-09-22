@@ -1,7 +1,9 @@
 package pubsub
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 
@@ -61,13 +63,26 @@ func DeclareAndBind(
 	}
 
 	var queue amqp.Queue
-	queue, err = ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, nil)
+	queue, err = ch.QueueDeclare(
+		queueName,
+		durable,
+		autoDelete,
+		exclusive,
+		false,
+		amqp.Table{
+			"x-dead-letter-exchange": "peril_dlx",
+		})
 
 	if err != nil {
 		return nil, amqp.Queue{}, err
 	}
 
-	err = ch.QueueBind(queue.Name, key, exchange, false, nil)
+	err = ch.QueueBind(
+		queue.Name,
+		key,
+		exchange,
+		false,
+		nil)
 	if err != nil {
 		return nil, amqp.Queue{}, err
 	}
@@ -89,6 +104,11 @@ func SubscribeJSON[T any](
 		return err
 	}
 
+	err = ch.Qos(10, 0, false)
+	if err != nil {
+		return err
+	}
+
 	deliveryCh, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 	if err != nil {
 		return err
@@ -104,13 +124,69 @@ func SubscribeJSON[T any](
 			}
 			ack := handler(data)
 			if ack == Ack {
-				fmt.Println("Received message:", ack)
 				msg.Ack(false)
 			} else if ack == NackRequeue {
-				fmt.Println("Received message:", ack)
 				msg.Nack(false, true)
 			} else if ack == NackDiscard {
-				fmt.Println("Received message:", ack)
+				msg.Nack(false, false)
+			} else {
+				fmt.Println("Invalid ack:", ack)
+			}
+		}
+	}()
+	return nil
+}
+
+func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(val)
+	if err != nil {
+		return err
+	}
+	err = ch.PublishWithContext(context.Background(), exchange, key, false, false, amqp.Publishing{
+		ContentType: "application/gob",
+		Body:        buf.Bytes(),
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType int,
+	handler func(T) AckType,
+) error {
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
+	if err != nil {
+		return err
+	}
+
+	deliveryCh, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for msg := range deliveryCh {
+			dec := gob.NewDecoder(bytes.NewReader(msg.Body))
+			var data T
+			err := dec.Decode(&data)
+			if err != nil {
+				fmt.Println("Error decoding gob:", err)
+				continue
+			}
+			ack := handler(data)
+			if ack == Ack {
+				msg.Ack(false)
+			} else if ack == NackRequeue {
+				msg.Nack(false, true)
+			} else if ack == NackDiscard {
 				msg.Nack(false, false)
 			} else {
 				fmt.Println("Invalid ack:", ack)

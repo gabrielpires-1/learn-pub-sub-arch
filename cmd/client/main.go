@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"time"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -65,6 +67,18 @@ func main() {
 		log.Fatalf("could not subscribe to moves: %v", err)
 	}
 
+	// war queue
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilTopic,
+		"war",
+		routing.WarRecognitionsPrefix+"."+"*",
+		pubsub.SimpleQueueDurable,
+		handlerWar(gs, ch))
+	if err != nil {
+		log.Fatalf("could not subscribe to war: %v", err)
+	}
+
 	for {
 		input := gamelogic.GetInput()
 		if len(input) == 0 {
@@ -99,7 +113,32 @@ func main() {
 		case "help":
 			gamelogic.PrintClientHelp()
 		case "spam":
-			fmt.Println("spamming not allowed yet")
+			if len(input) < 2 {
+				fmt.Println("invalid command. usage: spam <number>")
+				continue
+			}
+			n, err := strconv.Atoi(input[1])
+			if err != nil {
+				fmt.Println("error: ", err)
+				continue
+			}
+			for i := 0; i < n; i++ {
+				msg := gamelogic.GetMaliciousLog()
+				currentTime := time.Now()
+				gamelog := routing.GameLog{
+					CurrentTime: currentTime,
+					Username:    username,
+					Message:     msg,
+				}
+				err = pubsub.PublishJSON(
+					ch,
+					routing.ExchangePerilTopic,
+					routing.GameLogSlug+"."+username,
+					gamelog)
+				if err != nil {
+					log.Printf("could not publish log: %v", err)
+				}
+			}
 		case "quit":
 			gamelogic.PrintQuit()
 			return

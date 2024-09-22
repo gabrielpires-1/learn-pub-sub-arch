@@ -29,9 +29,33 @@ func main() {
 	}
 	defer publishCh.Close()
 
-	_, _, err = pubsub.DeclareAndBind(connection, routing.ExchangePerilTopic, routing.GameLogSlug, routing.GameLogSlug+".*", pubsub.SimpleQueueDurable)
+	_, _, err = pubsub.DeclareAndBind(
+		connection,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.SimpleQueueDurable)
 	if err != nil {
-		log.Fatalf("could not subscribe to pause: %v", err)
+		log.Fatalf("could not subscribe to game_log: %v", err)
+	}
+
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug,
+		pubsub.SimpleQueueDurable,
+		func(glog routing.GameLog) pubsub.AckType {
+			err := gamelogic.WriteLog(glog)
+			if err != nil {
+				log.Printf("could not write log: %v", err)
+				return pubsub.NackRequeue
+			}
+			return pubsub.Ack
+		},
+	)
+	if err != nil {
+		log.Fatalf("could not subscribe to game_log: %v", err)
 	}
 
 	gamelogic.PrintServerHelp()
